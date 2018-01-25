@@ -28,7 +28,8 @@ def update_work():
         try:
             r = requests.get(
                 '%s/mine.php?q=info&worker=%s&address=%s&hashrate=%s' %
-                (POOL_URL, WORKER_NAME, WALLET_ADDRESS, sum(hash_rates)))
+                (POOL_URL, WORKER_NAME, WALLET_ADDRESS, sum(hash_rates)),
+                timeout=1)
             r.raise_for_status()
             data = r.json()['data']
             if data is None:
@@ -72,7 +73,8 @@ def submit_share(nonce, argon, pool_address):
                     'private_key': WALLET_ADDRESS,
                     'public_key': pool_address,
                     'address': WALLET_ADDRESS,
-                })
+                },
+                timeout=1)
             r.raise_for_status()
             share_submitted = True
             print("submit_share:\n", r.json())

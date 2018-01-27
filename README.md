@@ -6,14 +6,22 @@ This is a multithreaded Python miner for the
 
 ## Ubuntu/Debian
 ```
-sudo apt install python3-pip
+sudo apt install git
+sudo apt install python3 python3-pip
+git clone https://github.com/protovist/arionum-miner.git
+cd arionum-miner
 sudo pip3 install -r requirements.txt
 ```
 
 # Usage
 
 ```
-python3 miner.py --wallet <CHANGEADDRESS>
+python3 miner.py --wallet <your wallet address>
+```
+## Optional Arguments
+```
+--worker_count <number of workers>
+--worker_name <custom worker name>
 ```
 
 # Donations

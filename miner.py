@@ -1,28 +1,22 @@
+import argon2
 import argparse
 import base64
 import hashlib
+import math
+import multiprocessing
 import os
-import queue
 import random
 import re
 import requests
-import threading
 import time
-
-from argon2 import PasswordHasher
 
 POOL_URL = ''
 WALLET_ADDRESS = '4boSzKSto9SqkZFxExYXhC4UnPrqqzvQ78QjABSSqXTA2JixFU1g9tBmkGZPzKtQNeDkhkvS7vmED1KuSFY33Egc'
 WORKER_NAME = hashlib.sha224((os.uname()[1]).encode("utf-8")).hexdigest()[0:32]
-
-hash_rates = []
-work_item = []
-result_queue = queue.Queue()
-work_item_lock = threading.Lock()
+WORKER_COUNT = math.ceil((multiprocessing.cpu_count() + 1) / 2)
 
 
-def update_work():
-    global work_item
+def update_work(work_item, work_item_lock, hash_rates):
     update_count = 0
     while True:
         try:
@@ -48,7 +42,10 @@ def update_work():
                 raise ValueError('public_key=None')
 
             with work_item_lock:
-                work_item = (block, difficulty, limit, pool_address)
+                work_item[0] = block
+                work_item[1] = difficulty
+                work_item[2] = limit
+                work_item[3] = pool_address
             if update_count % 10 == 0:
                 print("update_work:\n", r.json())
             update_count += 1
@@ -87,8 +84,7 @@ def submit_share(nonce, argon, pool_address):
             print("submit_share failed after 5 attempts\n")
 
 
-def solve_work(index):
-    global hash_rates
+def solve_work(index, work_item, work_item_lock, result_queue, hash_rates):
     work_count = 0
     time_start = time.time()
     while (True):
@@ -100,7 +96,8 @@ def solve_work(index):
                                              byteorder='big')).decode('utf-8')
         nonce = re.sub('[^a-zA-Z0-9]', '', nonce)
         base = '%s-%s-%s-%s' % (pool_address, nonce, block, difficulty)
-        ph = PasswordHasher(time_cost=4, memory_cost=16384, parallelism=4)
+        ph = argon2.PasswordHasher(
+            time_cost=4, memory_cost=16384, parallelism=4)
         argon = ph.hash(base)
         base = base + argon
         hash = hashlib.sha512(base.encode('utf-8'))
@@ -115,7 +112,7 @@ def solve_work(index):
         result = int(duration) // int(difficulty)
 
         if result > 0 and result < limit:
-            print("solve_work: t%d found valid nonce: %s, %s, %s @ %s:%s:%s" %
+            print("solve_work: #%d found valid nonce: %s, %s, %s @ %s:%s:%s" %
                   (index, nonce, argon, pool_address, duration, difficulty,
                    result))
             result_queue.put((nonce, argon, pool_address))
@@ -127,7 +124,7 @@ def solve_work(index):
             work_count = 0
             time_start = time_end
             if index == 0:
-                print('%f H/s - %d threads' % (sum(hash_rates),
+                print('%f H/s - %d workers' % (sum(hash_rates),
                                                len(hash_rates)))
 
 
@@ -135,6 +132,7 @@ def main():
     global POOL_URL
     global WALLET_ADDRESS
     global WORKER_NAME
+    global WORKER_COUNT
 
     parser = argparse.ArgumentParser(description='Arionum pool miner')
     parser.add_argument(
@@ -143,44 +141,52 @@ def main():
         default='http://aropool.com',
         help='Mining pool URL')
     parser.add_argument(
-        '--wallet', type=str, default='', help='Arionum wallet for deposits')
-    parser.add_argument('--worker', type=str, default='', help='Worker name')
+        '--wallet', type=str, default=None, help='Arionum wallet for deposits')
     parser.add_argument(
-        '--threads', type=int, default=2, help='Number of threads to use')
+        '--worker_name', type=str, default=None, help='Worker name')
+    parser.add_argument(
+        '--worker_count',
+        type=int,
+        default=None,
+        help='Number of workers to use')
     args = parser.parse_args()
 
     POOL_URL = args.pool
-    if args.wallet:
+    if args.wallet is not None:
         WALLET_ADDRESS = args.wallet
-    if args.worker:
-        WORKER_NAME = args.worker
+    if args.worker_name is not None:
+        WORKER_NAME = args.worker_name
+    if args.worker_count is not None:
+        WORKER_COUNT = args.worker_count
     print("Launching miner with worker name: ", WORKER_NAME)
     print("Mining to wallet: ", WALLET_ADDRESS)
 
-    t = threading.Thread(target=update_work)
-    t.daemon = True
-    t.start()
+    with multiprocessing.Manager() as manager:
+        hash_rates = manager.Array('f', range(WORKER_COUNT))
+        work_item = manager.list([None for _ in range(4)])
+        work_item_lock = manager.Lock()
+        result_queue = manager.Queue()
 
-    print("Waiting for work from pool...")
-    while len(work_item) == 0:
-        time.sleep(1)
+        p = multiprocessing.Process(
+            target=update_work, args=(work_item, work_item_lock, hash_rates))
+        p.start()
 
-    threads = []
-    for i in range(args.threads):
-        t = threading.Thread(target=solve_work, args=(i, ))
-        threads.append(t)
-        hash_rates.append(0)
-        t.daemon = True
-        t.start()
-        print("started thread: %d" % (i))
+        while work_item[0] is None:
+            time.sleep(1)
 
-    while True:
-        (nonce, argon, pool_address) = result_queue.get()
-        submit_share(nonce, argon, pool_address)
-        result_queue.task_done()
+        processes = []
+        for i in range(WORKER_COUNT):
+            p = multiprocessing.Process(
+                target=solve_work,
+                args=(i, work_item, work_item_lock, result_queue, hash_rates))
+            processes.append(p)
+            p.start()
+            print("started worker: %d" % (i))
 
-    for t in threads:
-        t.join()
+        while True:
+            (nonce, argon, pool_address) = result_queue.get()
+            submit_share(nonce, argon, pool_address)
+            result_queue.task_done()
 
 
 if __name__ == '__main__':

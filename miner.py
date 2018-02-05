@@ -31,6 +31,9 @@ def update_work(work_item, work_item_lock, hash_rates):
             block = data['block']
             if block is None:
                 raise ValueError('block=None')
+            height = data['height']
+            if height is None:
+                raise ValueError('height=None')
             difficulty = data['difficulty']
             if difficulty is None:
                 raise ValueError('difficulty=None')
@@ -46,6 +49,7 @@ def update_work(work_item, work_item_lock, hash_rates):
                 work_item[1] = difficulty
                 work_item[2] = limit
                 work_item[3] = pool_address
+                work_item[4] = height
             if update_count % 10 == 0:
                 print("update_work:\n", r.json())
             update_count += 1
@@ -89,15 +93,19 @@ def solve_work(index, work_item, work_item_lock, result_queue, hash_rates):
     time_start = time.time()
     while (True):
         with work_item_lock:
-            (block, difficulty, limit, pool_address) = work_item
+            (block, difficulty, limit, pool_address, height) = work_item
 
         nonce = base64.b64encode(
             random.getrandbits(256).to_bytes(32,
                                              byteorder='big')).decode('utf-8')
         nonce = re.sub('[^a-zA-Z0-9]', '', nonce)
         base = '%s-%s-%s-%s' % (pool_address, nonce, block, difficulty)
-        ph = argon2.PasswordHasher(
-            time_cost=4, memory_cost=16384, parallelism=4)
+        if height > 10800:
+            ph = argon2.PasswordHasher(
+                time_cost=1, memory_cost=524288, parallelism=1)
+        else:
+            ph = argon2.PasswordHasher(
+                time_cost=4, memory_cost=16384, parallelism=4)
         argon = ph.hash(base)
         base = base + argon
         hash = hashlib.sha512(base.encode('utf-8'))
@@ -163,7 +171,7 @@ def main():
 
     with multiprocessing.Manager() as manager:
         hash_rates = manager.Array('f', range(WORKER_COUNT))
-        work_item = manager.list([None for _ in range(4)])
+        work_item = manager.list([None for _ in range(5)])
         work_item_lock = manager.Lock()
         result_queue = manager.Queue()
 

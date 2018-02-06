@@ -60,7 +60,7 @@ def update_work(work_item, work_item_lock, hash_rates):
 
 
 def submit_share(nonce, argon, pool_address):
-    argon = argon[29:]
+    argon = argon[30:]
     print("submit_share: %s, %s" % (nonce, argon))
     share_submitted = False
     try:

@@ -102,10 +102,10 @@ def solve_work(index, work_item, work_item_lock, result_queue, hash_rates):
         base = '%s-%s-%s-%s' % (pool_address, nonce, block, difficulty)
         if height > 10800:
             ph = argon2.PasswordHasher(
-                time_cost=1, memory_cost=524288, parallelism=1)
+                time_cost=1, memory_cost=524288, parallelism=1, hash_len=32)
         else:
             ph = argon2.PasswordHasher(
-                time_cost=4, memory_cost=16384, parallelism=4)
+                time_cost=4, memory_cost=16384, parallelism=4, hash_len=32)
         argon = ph.hash(base)
         base = base + argon
         hash = hashlib.sha512(base.encode('utf-8'))
